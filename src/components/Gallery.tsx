@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { SUPABASE_BUCKET, SUPABASE_PHOTOS_TABLE } from "../config";
 import { supabase } from "../supabaseClient";
 
@@ -39,12 +40,33 @@ export default function Gallery() {
     };
 
     useEffect(() => {
+        const channel = supabase
+            .channel("photos-changes")
+            .on(
+                "postgres_changes",
+                {
+                    event: "*",
+                    schema: "public",
+                    table: SUPABASE_PHOTOS_TABLE,
+                },
+                () => {
+                    fetchPhotos();
+                }
+            )
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
+    }, []);
+
+    useEffect(() => {
         fetchPhotos();
     }, [page]);
 
     const handleDelete = async () => {
         if (password !== PASSWORD || !deleteTarget) {
-            alert("❌ Contraseña incorrecta");
+            toast.error("❌ Contraseña incorrecta");
             return;
         }
 
@@ -57,57 +79,55 @@ export default function Gallery() {
 
             if (dbError) {
                 console.error("Error eliminando de tabla:", dbError);
-                alert("Error eliminando en la base de datos. Revisa políticas (RLS).");
+                toast.error(
+                    "Error eliminando en la base de datos. Revisa políticas (RLS)."
+                );
                 return;
             }
 
             if (!dbData || dbData.length === 0) {
-                console.warn("No se eliminó ninguna fila (dbData vacío). Verifica RLS/policies.");
-                const { data: still, error: stillErr } = await supabase
-                    .from(SUPABASE_PHOTOS_TABLE)
-                    .select("*")
-                    .eq("id", deleteTarget.id);
-                console.log("🔎 fila tras intento delete:", still, "err:", stillErr);
-                alert("No se eliminó la fila: probablemente las políticas (RLS) impiden borrar.");
+                console.warn(
+                    "No se eliminó ninguna fila. Verifica RLS/policies."
+                );
+                toast.error(
+                    "No se eliminó la fila: probablemente las políticas (RLS) impiden borrar."
+                );
                 return;
             }
 
-            console.log("✅ Eliminado de tabla:", dbData);
-
-            const { data: storageData, error: storageError } = await supabase.storage
+            const { error: storageError } = await supabase.storage
                 .from(SUPABASE_BUCKET)
                 .remove([deleteTarget.name]);
 
             if (storageError) {
-                console.error("Error eliminando del storage (pero DB ya borrada):", storageError);
-                alert("Fila eliminada, pero hubo un problema borrando el archivo del storage.");
-            } else {
-                console.log("✅ Eliminado de storage:", storageData);
+                console.error("Error eliminando del storage:", storageError);
+                toast.error(
+                    "Fila eliminada, pero hubo un problema borrando el archivo del storage."
+                );
             }
 
             setShowModal(false);
             setPassword("");
             setDeleteTarget(null);
-            fetchPhotos();
         } catch (err) {
             console.error("handleDelete error:", err);
-            alert("Ocurrió un error inesperado. Revisa la consola.");
+            toast.error("Ocurrió un error inesperado. Revisa la consola.");
         }
     };
 
-
     return (
         <div className="w-full">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4">
+            {/* Galería responsiva */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 p-3">
                 {photos.map((p) => (
                     <div
                         key={p.id}
-                        className="relative group w-48 h-48 mx-auto"
+                        className="relative group w-full aspect-square mx-auto"
                     >
                         <img
                             src={p.url}
                             alt={p.name}
-                            className="w-48 h-48 object-cover rounded-lg shadow-md"
+                            className="w-full h-full object-cover rounded-lg shadow-md"
                         />
                         <span className="absolute bottom-1 left-1 bg-black/60 text-white text-xs px-2 rounded">
                             {p.guest_name || "Invitado"}
@@ -126,7 +146,7 @@ export default function Gallery() {
             </div>
 
             {/* Paginación */}
-            <div className="flex justify-center gap-4 my-4">
+            <div className="flex justify-center gap-4 my-4 text-sm sm:text-base">
                 <button
                     onClick={() => setPage((p) => Math.max(0, p - 1))}
                     disabled={page === 0}
@@ -139,7 +159,9 @@ export default function Gallery() {
                 </span>
                 <button
                     onClick={() =>
-                        setPage((p) => (p + 1 < Math.ceil(total / PAGE_SIZE) ? p + 1 : p))
+                        setPage((p) =>
+                            p + 1 < Math.ceil(total / PAGE_SIZE) ? p + 1 : p
+                        )
                     }
                     disabled={(page + 1) * PAGE_SIZE >= total}
                     className="px-3 py-1 bg-gray-200 rounded disabled:opacity-50"
@@ -150,9 +172,11 @@ export default function Gallery() {
 
             {/* Modal eliminar */}
             {showModal && deleteTarget && (
-                <div className="fixed inset-0 bg-black/60 flex items-center justify-center">
-                    <div className="bg-white p-6 rounded-lg shadow-md space-y-4">
-                        <h2 className="text-lg font-bold text-red-600">Eliminar foto</h2>
+                <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4">
+                    <div className="bg-white w-full max-w-sm p-6 rounded-lg shadow-md space-y-4">
+                        <h2 className="text-lg font-bold text-red-600">
+                            Eliminar foto
+                        </h2>
                         <p>Ingresa la contraseña para confirmar:</p>
                         <input
                             type="password"
